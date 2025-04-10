@@ -219,7 +219,7 @@ pub(crate) mod test {
     // Tests that an honestly generated inclusion proof verifies
     #[test]
     fn inclusion_proof_correctness() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let t = rand_tree(&mut rng, 100);
 

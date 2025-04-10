@@ -334,9 +334,9 @@ pub(crate) mod test {
     // Adds a bunch of elements to the tree and then tests the tree's well-formedness
     #[test]
     fn self_check() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for _ in 0..1000 {
-            let num_items = rng.gen_range(0..230);
+            let num_items = rng.random_range(0..230);
             let tree = rand_tree(&mut rng, num_items);
             tree.self_check().expect("self check failed");
         }
@@ -346,10 +346,10 @@ pub(crate) mod test {
     #[cfg(feature = "serde")]
     #[test]
     fn ser_deser() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         for _ in 0..100 {
-            let num_items = rng.gen_range(0..230);
+            let num_items = rng.random_range(0..230);
             let tree = rand_tree(&mut rng, num_items);
 
             // Serialize and deserialize the tree

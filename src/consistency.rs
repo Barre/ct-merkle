@@ -313,7 +313,7 @@ pub(crate) mod test {
     // or two modified roots does not
     #[test]
     fn consistency_proof() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         for initial_size in 1..25 {
             for num_to_add in 0..25 {
