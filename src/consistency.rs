@@ -109,7 +109,7 @@ pub fn indices_for_consistency_proof(num_oldtree_leaves: u64, num_additions: u64
     }
     if num_oldtree_leaves
         .checked_add(num_additions)
-        .map_or(false, |s| s > u64::MAX / 2 + 1)
+        .is_some_and(|s| s > u64::MAX / 2 + 1)
     {
         panic!("too many leaves")
     }

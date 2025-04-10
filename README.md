@@ -50,40 +50,38 @@ use ct_merkle::{
 };
 use sha2::Sha256;
 
-fn main() {
-    // Make a new tree whose leaves are strings
-    let mut tree = MemoryBackedTree::<Sha256, String>::new();
-    tree.push("hello".to_string());
-    tree.push("world".to_string());
-    let root = tree.root();
+// Make a new tree whose leaves are strings
+let mut tree = MemoryBackedTree::<Sha256, String>::new();
+tree.push("hello".to_string());
+tree.push("world".to_string());
+let root = tree.root();
 
-    // Prove inclusion of the last item in the tree
-    let items_pushed = tree.len();
-    let item_to_prove = items_pushed - 1;
-    let inclusion_proof = tree.prove_inclusion(item_to_prove as usize);
-    // Verify the inclusion
-    assert!(root
-        .verify_inclusion(&"world", item_to_prove, &inclusion_proof)
-        .is_ok());
+// Prove inclusion of the last item in the tree
+let items_pushed = tree.len();
+let item_to_prove = items_pushed - 1;
+let inclusion_proof = tree.prove_inclusion(item_to_prove as usize);
+// Verify the inclusion
+assert!(root
+    .verify_inclusion(&"world", item_to_prove, &inclusion_proof)
+    .is_ok());
 
-    // Now imagine we don't have a memory-backed tree. We will get the indices for
-    // the hashes to fetch and then build the proof
-    let indices_to_fetch = indices_for_inclusion_proof(items_pushed, item_to_prove);
+// Now imagine we don't have a memory-backed tree. We will get the indices for
+// the hashes to fetch and then build the proof
+let indices_to_fetch = indices_for_inclusion_proof(items_pushed, item_to_prove);
 
-    //
-    // Imagine here we fetch the indices in order and place them into `digests`...
-    //
+//
+// Imagine here we fetch the indices in order and place them into `digests`...
+//
 
-    let digests: Vec<&digest::Output<Sha256>> = inclusion_proof
-        .as_bytes()
-        .chunks(32)
-        .map(TryInto::try_into)
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    let inclusion_proof = InclusionProof::from_digests(digests);
-    // Verify the inclusion
-    assert!(root
-        .verify_inclusion(&"world", item_to_prove, &inclusion_proof)
-        .is_ok());
-}
+let digests: Vec<&digest::Output<Sha256>> = inclusion_proof
+    .as_bytes()
+    .chunks(32)
+    .map(TryInto::try_into)
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
+let inclusion_proof = InclusionProof::from_digests(digests);
+// Verify the inclusion
+assert!(root
+    .verify_inclusion(&"world", item_to_prove, &inclusion_proof)
+    .is_ok());
 ```

@@ -130,7 +130,7 @@ impl InternalIdx {
     }
 
     // The rest of the functions are a direct translation of the array-tree math in
-    /// https://www.ietf.org/archive/id/draft-ietf-mls-protocol-14.html#array-based-trees
+    // https://www.ietf.org/archive/id/draft-ietf-mls-protocol-14.html#array-based-trees
 
     /// Returns the parent of this node, in a tree of `num_leaves` leaves
     ///
