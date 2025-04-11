@@ -109,7 +109,7 @@ pub fn indices_for_consistency_proof(num_oldtree_leaves: u64, num_additions: u64
     }
     if num_oldtree_leaves
         .checked_add(num_additions)
-        .map_or(false, |s| s > u64::MAX / 2 + 1)
+        .is_some_and(|s| s > u64::MAX / 2 + 1)
     {
         panic!("too many leaves")
     }
@@ -313,7 +313,7 @@ pub(crate) mod test {
     // or two modified roots does not
     #[test]
     fn consistency_proof() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         for initial_size in 1..25 {
             for num_to_add in 0..25 {
