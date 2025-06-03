@@ -8,9 +8,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub enum SlateDbTreeError {
     DbError(slatedb::SlateDBError),
-
     EncodingError(String),
-
     InconsistentState(String),
 }
 
@@ -129,7 +127,7 @@ where
             ));
         }
 
-]        let mut computed_hashes = alloc::collections::BTreeMap::<u64, digest::Output<H>>::new();
+        let mut computed_hashes = alloc::collections::BTreeMap::<u64, digest::Output<H>>::new();
 
         for item in items.iter() {
             let leaf_bytes = bincode::serialize(item)
