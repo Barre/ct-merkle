@@ -75,7 +75,9 @@ where
             _phantom_t: core::marker::PhantomData,
         };
 
-        if tree.get_num_leaves().await?.is_none() {
+        let existing_leaves = tree.get_num_leaves().await?;
+
+        if existing_leaves.is_none() {
             tree.set_num_leaves(0).await?;
         }
 
@@ -126,7 +128,17 @@ where
 
     /// Appends multiple items to the tree in a single atomic batch operation.
     pub async fn batch_push(&mut self, items: Vec<T>) -> Result<(), SlateDbTreeError> {
-        if items.is_empty() {
+        self.batch_push_with_data(items, alloc::vec![]).await
+    }
+
+    /// Appends multiple items to the tree along with additional key-value pairs in a single atomic batch.
+    /// This ensures consistency between the merkle tree and any associated data.
+    pub async fn batch_push_with_data(
+        &mut self,
+        items: Vec<T>,
+        additional_data: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), SlateDbTreeError> {
+        if items.is_empty() && additional_data.is_empty() {
             return Ok(());
         }
 
@@ -199,6 +211,12 @@ where
         }
 
         batch.put(META_KEY, &current_num_leaves.to_be_bytes());
+
+        // Add additional key-value pairs to the same batch
+        for (key, value) in additional_data {
+            batch.put(&key, &value);
+        }
+
         self.db.write(batch).await?;
 
         Ok(())
