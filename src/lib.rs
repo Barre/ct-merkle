@@ -16,6 +16,10 @@ mod inclusion;
 pub mod mem_backed_tree;
 mod tree_util;
 
+#[cfg(feature = "slatedb")]
+#[cfg_attr(docsrs, doc(cfg(feature = "slatedb")))]
+pub mod slatedb_backed_tree;
+
 #[cfg(test)]
 mod test_util;
 
