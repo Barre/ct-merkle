@@ -1,4 +1,7 @@
-use crate::{tree_util::*, RootHash};
+use crate::{
+    indices_for_consistency_proof, indices_for_inclusion_proof, tree_util::*, ConsistencyProof,
+    InclusionProof, RootHash,
+};
 use alloc::{format, string::String, string::ToString, vec::Vec};
 use core::fmt;
 use digest::Digest;
@@ -18,6 +21,15 @@ impl fmt::Display for SlateDbTreeError {
             SlateDbTreeError::DbError(e) => write!(f, "SlateDB error: {}", e),
             SlateDbTreeError::EncodingError(e) => write!(f, "Encoding error: {}", e),
             SlateDbTreeError::InconsistentState(e) => write!(f, "Inconsistent state: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for SlateDbTreeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            SlateDbTreeError::DbError(e) => Some(e),
+            _ => None,
         }
     }
 }
@@ -323,6 +335,68 @@ where
             }
             None => Ok(None),
         }
+    }
+
+    /// Returns a proof of inclusion of the item at the given index.
+    ///
+    /// # Errors
+    /// Returns an error if the index is out of bounds or if there's a database error.
+    pub async fn prove_inclusion(&self, idx: u64) -> Result<InclusionProof<H>, SlateDbTreeError> {
+        let num_leaves = self.len().await?;
+
+        if idx >= num_leaves {
+            return Err(SlateDbTreeError::InconsistentState(format!(
+                "Index {} out of bounds (tree has {} leaves)",
+                idx, num_leaves
+            )));
+        }
+
+        let idxs = indices_for_inclusion_proof(num_leaves, idx);
+
+        let mut sibling_hashes = Vec::with_capacity(idxs.len());
+        for &node_idx in &idxs {
+            let hash = self.get_node_hash(InternalIdx::new(node_idx)).await?;
+            sibling_hashes.push(hash);
+        }
+
+        Ok(InclusionProof::from_digests(sibling_hashes.iter()))
+    }
+
+    /// Produces a proof that a tree with `old_size` leaves is a prefix of this tree.
+    ///
+    /// # Errors
+    /// Returns an error if `old_size` is 0, greater than or equal to the current tree size,
+    /// or if there's a database error.
+    pub async fn prove_consistency(
+        &self,
+        old_size: u64,
+    ) -> Result<ConsistencyProof<H>, SlateDbTreeError> {
+        let new_size = self.len().await?;
+
+        if old_size == 0 {
+            return Err(SlateDbTreeError::InconsistentState(
+                "Cannot create consistency proof from empty tree".into(),
+            ));
+        }
+
+        if old_size >= new_size {
+            return Err(SlateDbTreeError::InconsistentState(format!(
+                "Old size {} must be less than current size {}",
+                old_size, new_size
+            )));
+        }
+
+        let num_additions = new_size - old_size;
+
+        let idxs = indices_for_consistency_proof(old_size, num_additions);
+
+        let mut proof_hashes = Vec::with_capacity(idxs.len());
+        for &node_idx in &idxs {
+            let hash = self.get_node_hash(InternalIdx::new(node_idx)).await?;
+            proof_hashes.push(hash);
+        }
+
+        Ok(ConsistencyProof::from_digests(proof_hashes.iter()))
     }
 }
 
@@ -937,5 +1011,257 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_inclusion_proof_basic() {
+        let object_store = Arc::new(slatedb::object_store::memory::InMemory::new());
+        let db = Arc::new(
+            Db::open_with_opts("/tmp/test_inclusion", DbOptions::default(), object_store)
+                .await
+                .unwrap(),
+        );
+
+        let mut tree = TestTree::new(db).await.unwrap();
+        let mut mem_tree = MemTree::new();
+
+        tree.push(b"hello".to_vec()).await.unwrap();
+        tree.push(b"world".to_vec()).await.unwrap();
+        mem_tree.push(b"hello".to_vec());
+        mem_tree.push(b"world".to_vec());
+
+        let root = tree.root().await.unwrap();
+
+        let proof0 = tree.prove_inclusion(0).await.unwrap();
+        let proof1 = tree.prove_inclusion(1).await.unwrap();
+
+        assert!(root
+            .verify_inclusion(&b"hello".to_vec(), 0, &proof0)
+            .is_ok());
+        assert!(root
+            .verify_inclusion(&b"world".to_vec(), 1, &proof1)
+            .is_ok());
+
+        let mem_proof0 = mem_tree.prove_inclusion(0);
+        let mem_proof1 = mem_tree.prove_inclusion(1);
+
+        assert_eq!(
+            proof0.as_bytes(),
+            mem_proof0.as_bytes(),
+            "Inclusion proofs should match between SlateDB and memory trees"
+        );
+        assert_eq!(
+            proof1.as_bytes(),
+            mem_proof1.as_bytes(),
+            "Inclusion proofs should match between SlateDB and memory trees"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inclusion_proof_comprehensive() {
+        let object_store = Arc::new(slatedb::object_store::memory::InMemory::new());
+        let db = Arc::new(
+            Db::open_with_opts(
+                "/tmp/test_inclusion_comp",
+                DbOptions::default(),
+                object_store,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let mut slate_tree = TestTree::new(db).await.unwrap();
+        let mut mem_tree = MemTree::new();
+
+        for size in [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 50, 100] {
+            while slate_tree.len().await.unwrap() < size {
+                let val = vec![slate_tree.len().await.unwrap() as u8];
+                slate_tree.push(val.clone()).await.unwrap();
+                mem_tree.push(val);
+            }
+
+            let slate_root = slate_tree.root().await.unwrap();
+            let mem_root = mem_tree.root();
+
+            for idx in 0..size {
+                let leaf = slate_tree.get(idx).await.unwrap().unwrap();
+
+                let slate_proof = slate_tree.prove_inclusion(idx).await.unwrap();
+
+                let mem_proof = mem_tree.prove_inclusion(idx as usize);
+
+                assert_eq!(
+                    slate_proof.as_bytes(),
+                    mem_proof.as_bytes(),
+                    "Proofs should match for idx {} in tree of size {}",
+                    idx,
+                    size
+                );
+
+                assert!(
+                    slate_root
+                        .verify_inclusion(&leaf, idx, &slate_proof)
+                        .is_ok(),
+                    "SlateDB proof should verify for idx {} in tree of size {}",
+                    idx,
+                    size
+                );
+                assert!(
+                    mem_root.verify_inclusion(&leaf, idx, &mem_proof).is_ok(),
+                    "Memory proof should verify for idx {} in tree of size {}",
+                    idx,
+                    size
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_consistency_proof_basic() {
+        let object_store = Arc::new(slatedb::object_store::memory::InMemory::new());
+        let db = Arc::new(
+            Db::open_with_opts("/tmp/test_consistency", DbOptions::default(), object_store)
+                .await
+                .unwrap(),
+        );
+
+        let mut tree = TestTree::new(db).await.unwrap();
+
+        for i in 0..5u8 {
+            tree.push(vec![i]).await.unwrap();
+        }
+        let old_root = tree.root().await.unwrap();
+        let old_size = tree.len().await.unwrap();
+
+        for i in 5..10u8 {
+            tree.push(vec![i]).await.unwrap();
+        }
+        let new_root = tree.root().await.unwrap();
+
+        let proof = tree.prove_consistency(old_size).await.unwrap();
+
+        assert!(
+            new_root.verify_consistency(&old_root, &proof).is_ok(),
+            "Consistency proof should verify"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_consistency_proof_comprehensive() {
+        let object_store = Arc::new(slatedb::object_store::memory::InMemory::new());
+        let db = Arc::new(
+            Db::open_with_opts(
+                "/tmp/test_consistency_comp",
+                DbOptions::default(),
+                object_store,
+            )
+            .await
+            .unwrap(),
+        );
+
+        let mut slate_tree: TestTree;
+        let mut mem_tree: MemTree;
+
+        let test_cases = vec![
+            (1, 2),
+            (1, 5),
+            (2, 3),
+            (2, 4),
+            (3, 8),
+            (4, 5),
+            (4, 8),
+            (5, 10),
+            (8, 16),
+            (15, 20),
+            (16, 32),
+            (20, 50),
+            (32, 64),
+        ];
+
+        for (old_size, new_size) in test_cases {
+            let object_store = Arc::new(slatedb::object_store::memory::InMemory::new());
+            let db = Arc::new(
+                Db::open_with_opts(
+                    format!("/tmp/test_cons_{}_{}", old_size, new_size).as_str(),
+                    DbOptions::default(),
+                    object_store,
+                )
+                .await
+                .unwrap(),
+            );
+            slate_tree = TestTree::new(db).await.unwrap();
+            mem_tree = MemTree::new();
+
+            for i in 0..old_size {
+                let val = vec![i as u8];
+                slate_tree.push(val.clone()).await.unwrap();
+                mem_tree.push(val);
+            }
+
+            let old_slate_root = slate_tree.root().await.unwrap();
+            let old_mem_root = mem_tree.root();
+
+            for i in old_size..new_size {
+                let val = vec![i as u8];
+                slate_tree.push(val.clone()).await.unwrap();
+                mem_tree.push(val);
+            }
+
+            let new_slate_root = slate_tree.root().await.unwrap();
+            let new_mem_root = mem_tree.root();
+
+            let slate_proof = slate_tree.prove_consistency(old_size).await.unwrap();
+            let mem_proof = mem_tree.prove_consistency((new_size - old_size) as usize);
+
+            assert_eq!(
+                slate_proof.as_bytes(),
+                mem_proof.as_bytes(),
+                "Consistency proofs should match for {} -> {} transition",
+                old_size,
+                new_size
+            );
+
+            assert!(
+                new_slate_root
+                    .verify_consistency(&old_slate_root, &slate_proof)
+                    .is_ok(),
+                "SlateDB consistency proof should verify for {} -> {}",
+                old_size,
+                new_size
+            );
+            assert!(
+                new_mem_root
+                    .verify_consistency(&old_mem_root, &mem_proof)
+                    .is_ok(),
+                "Memory consistency proof should verify for {} -> {}",
+                old_size,
+                new_size
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_proof_errors() {
+        let object_store = Arc::new(slatedb::object_store::memory::InMemory::new());
+        let db = Arc::new(
+            Db::open_with_opts("/tmp/test_proof_errors", DbOptions::default(), object_store)
+                .await
+                .unwrap(),
+        );
+
+        let mut tree = TestTree::new(db).await.unwrap();
+
+        assert!(tree.prove_inclusion(0).await.is_err());
+
+        for i in 0..10u8 {
+            tree.push(vec![i]).await.unwrap();
+        }
+
+        assert!(tree.prove_inclusion(10).await.is_err());
+        assert!(tree.prove_inclusion(100).await.is_err());
+
+        assert!(tree.prove_consistency(0).await.is_err()); // old_size = 0
+        assert!(tree.prove_consistency(10).await.is_err()); // old_size = current size
+        assert!(tree.prove_consistency(11).await.is_err()); // old_size > current size
     }
 }
